@@ -44,7 +44,8 @@ class TranscriptListFetcher(object):
         return TranscriptList.build(
             self._http_client,
             video_id,
-            self._extract_captions_json(self._fetch_video_html(video_id), video_id)
+            *self._extract_captions_json(self._fetch_video_html(video_id), video_id)
+            #self._extract_captions_json(self._fetch_video_html(video_id), video_id)
         )
 
     def _extract_captions_json(self, html, video_id):
@@ -66,8 +67,21 @@ class TranscriptListFetcher(object):
 
         if 'captionTracks' not in captions_json:
             raise NoTranscriptAvailable(video_id)
-
-        return captions_json
+        # adding video details
+        # TODO:// make sure all cases word description usually has a lot of characters that could be invalid (fixed :D)
+        # video_info = json.loads(splitted_html[1].split(',"annotations')[0].split(',"videoDetails":')[1].replace('\n', '').replace("”\"","”"))
+        #pre desc
+        pre_desc = json.loads(splitted_html[1].split(',"annotations')[0].split(',"videoDetails":')[1].split(',"shortDescription":')[0].replace('\n', '').replace("”\"","”")+"}")
+        #desc
+        video_desc = {'shortDescription': splitted_html[1].split(',"annotations')[0].split(',"videoDetails":')[1].split(',"shortDescription":')[1].split(',"isCrawlable":')[0].replace('\n', '').replace("”\"","”")}
+        #post_desc
+        post_desc = json.loads('{"isCrawlable":'+splitted_html[1].split(',"annotations')[0].split(',"videoDetails":')[1].split(',"shortDescription":')[1].split(',"isCrawlable":')[1].replace('\n', '').replace("”\"","”"))
+        pre_desc.update(video_desc)
+        pre_desc.update(post_desc)
+        
+        video_info = pre_desc
+        return captions_json, video_info
+        #return captions_json
 
     def _create_consent_cookie(self, html, video_id):
         match = re.search('name="v" value="(.*?)"', html)
@@ -98,7 +112,8 @@ class TranscriptList(object):
     This object represents a list of transcripts. It can be iterated over to list all transcripts which are available
     for a given YouTube video. Also it provides functionality to search for a transcript in a given language.
     """
-    def __init__(self, video_id, manually_created_transcripts, generated_transcripts, translation_languages):
+    def __init__(self, video_id, manually_created_transcripts, generated_transcripts, translation_languages, details_json):
+    #def __init__(self, video_id, manually_created_transcripts, generated_transcripts, translation_languages):
         """
         The constructor is only for internal use. Use the static build method instead.
 
@@ -115,9 +130,10 @@ class TranscriptList(object):
         self._manually_created_transcripts = manually_created_transcripts
         self._generated_transcripts = generated_transcripts
         self._translation_languages = translation_languages
-
+        self.details_json = details_json
     @staticmethod
-    def build(http_client, video_id, captions_json):
+    def build(http_client, video_id, captions_json, details_json):
+    #def build(http_client, video_id, captions_json):
         """
         Factory method for TranscriptList.
 
@@ -153,7 +169,8 @@ class TranscriptList(object):
                 caption['name']['simpleText'],
                 caption['languageCode'],
                 caption.get('kind', '') == 'asr',
-                translation_languages if caption.get('isTranslatable', False) else []
+                translation_languages if caption.get('isTranslatable', False) else [],
+                details_json
             )
 
         return TranscriptList(
@@ -161,6 +178,7 @@ class TranscriptList(object):
             manually_created_transcripts,
             generated_transcripts,
             translation_languages,
+            details_json
         )
 
     def __iter__(self):
@@ -244,7 +262,9 @@ class TranscriptList(object):
                     language=translation_language['language'],
                     language_code=translation_language['language_code'],
                 ) for translation_language in self._translation_languages
-            )
+            ),
+            details_json=self.details_json,
+
         )
 
     def _get_language_description(self, transcript_strings):
@@ -253,7 +273,8 @@ class TranscriptList(object):
 
 
 class Transcript(object):
-    def __init__(self, http_client, video_id, url, language, language_code, is_generated, translation_languages):
+    def __init__(self, http_client, video_id, url, language, language_code, is_generated, translation_languages, details_json):
+    #def __init__(self, http_client, video_id, url, language, language_code, is_generated, translation_languages):
         """
         You probably don't want to initialize this directly. Usually you'll access Transcript objects using a
         TranscriptList.
@@ -279,6 +300,7 @@ class Transcript(object):
             translation_language['language_code']: translation_language['language']
             for translation_language in translation_languages
         }
+        self.details_json =details_json
 
     def fetch(self):
         """
@@ -288,9 +310,12 @@ class Transcript(object):
         :rtype [{'text': str, 'start': float, 'end': float}]:
         """
         response = self._http_client.get(self._url)
-        return _TranscriptParser().parse(
+        return {"details":self.details_json,"transcript":_TranscriptParser().parse(
             _raise_http_errors(response, self.video_id).text,
-        )
+        )}
+        #return _TranscriptParser().parse(
+        #    _raise_http_errors(response, self.video_id).text,
+        #)
 
     def __str__(self):
         return '{language_code} ("{language}"){translation_description}'.format(
@@ -318,6 +343,7 @@ class Transcript(object):
             language_code,
             True,
             [],
+            self.details_json
         )
 
 
